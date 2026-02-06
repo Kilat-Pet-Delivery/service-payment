@@ -34,7 +34,7 @@ func main() {
 	}
 
 	// Initialize logger
-	zapLogger, err := logger.NewNamed("development", "service-payment")
+	zapLogger, err := logger.NewNamed(cfg.AppEnv, "service-payment")
 	if err != nil {
 		log.Fatalf("failed to initialize logger: %v", err)
 	}
@@ -59,11 +59,18 @@ func main() {
 		zapLogger.Fatal("failed to connect to database", zap.Error(err))
 	}
 
-	// Auto-migrate
-	if err := db.AutoMigrate(&repository.PaymentModel{}); err != nil {
-		zapLogger.Fatal("failed to auto-migrate", zap.Error(err))
+	// Run database migrations
+	if cfg.AppEnv == "development" {
+		if err := db.AutoMigrate(&repository.PaymentModel{}); err != nil {
+			zapLogger.Fatal("failed to auto-migrate", zap.Error(err))
+		}
+		zapLogger.Info("database migration completed (dev auto-migrate)")
+	} else {
+		dbURL := dbConfig.DatabaseURL()
+		if err := database.RunMigrations(dbURL, "migrations", zapLogger); err != nil {
+			zapLogger.Fatal("failed to run migrations", zap.Error(err))
+		}
 	}
-	zapLogger.Info("database migration completed")
 
 	// Initialize JWT manager
 	jwtManager := auth.NewJWTManager(

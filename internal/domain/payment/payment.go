@@ -18,9 +18,6 @@ const (
 	EscrowFailed   EscrowStatus = "failed"
 )
 
-// DefaultPlatformFeePercent is the platform fee percentage charged on each payment.
-const DefaultPlatformFeePercent = 15.0
-
 // Payment is the aggregate root for the escrow payment domain.
 type Payment struct {
 	id                uuid.UUID
@@ -44,9 +41,10 @@ type Payment struct {
 }
 
 // NewPayment creates a new Payment aggregate with calculated platform fee and runner payout.
-func NewPayment(bookingID, ownerID uuid.UUID, amountCents int64, currency string) *Payment {
+// feePercent is the platform fee percentage (e.g. 15.0 for 15%).
+func NewPayment(bookingID, ownerID uuid.UUID, amountCents int64, currency string, feePercent float64) *Payment {
 	now := time.Now().UTC()
-	platformFeeCents := int64(float64(amountCents) * DefaultPlatformFeePercent / 100.0)
+	platformFeeCents := int64(float64(amountCents) * feePercent / 100.0)
 	runnerPayoutCents := amountCents - platformFeeCents
 
 	return &Payment{

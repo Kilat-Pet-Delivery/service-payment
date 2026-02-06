@@ -83,7 +83,7 @@ func main() {
 	paymentRepo := repository.NewPaymentRepository(db)
 
 	// Initialize saga service
-	sagaService := saga.NewPaymentSagaService(paymentRepo, stripeAdapter, kafkaProducer, zapLogger)
+	sagaService := saga.NewPaymentSagaService(paymentRepo, stripeAdapter, kafkaProducer, cfg.PlatformFeePercent, zapLogger)
 
 	// Initialize application service
 	paymentService := application.NewPaymentService(paymentRepo, sagaService, zapLogger)

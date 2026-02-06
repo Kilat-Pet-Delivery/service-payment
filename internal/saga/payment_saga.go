@@ -90,10 +90,11 @@ func (s *Saga) Execute(ctx context.Context) error {
 
 // PaymentSagaService orchestrates payment saga workflows.
 type PaymentSagaService struct {
-	repo     payment.PaymentRepository
-	stripe   adapter.StripeAdapter
-	producer *kafka.Producer
-	logger   *zap.Logger
+	repo               payment.PaymentRepository
+	stripe             adapter.StripeAdapter
+	producer           *kafka.Producer
+	platformFeePercent float64
+	logger             *zap.Logger
 }
 
 // NewPaymentSagaService creates a new PaymentSagaService.
@@ -101,13 +102,15 @@ func NewPaymentSagaService(
 	repo payment.PaymentRepository,
 	stripe adapter.StripeAdapter,
 	producer *kafka.Producer,
+	platformFeePercent float64,
 	logger *zap.Logger,
 ) *PaymentSagaService {
 	return &PaymentSagaService{
-		repo:     repo,
-		stripe:   stripe,
-		producer: producer,
-		logger:   logger,
+		repo:               repo,
+		stripe:             stripe,
+		producer:           producer,
+		platformFeePercent: platformFeePercent,
+		logger:             logger,
 	}
 }
 
@@ -118,7 +121,7 @@ func (s *PaymentSagaService) CreateEscrowSaga(
 	amountCents int64,
 	currency, customerEmail string,
 ) (*payment.Payment, error) {
-	p := payment.NewPayment(bookingID, ownerID, amountCents, currency)
+	p := payment.NewPayment(bookingID, ownerID, amountCents, currency, s.platformFeePercent)
 	var stripePaymentID string
 
 	saga := NewSaga("create_escrow", s.logger)

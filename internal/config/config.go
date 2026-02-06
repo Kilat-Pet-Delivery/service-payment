@@ -13,11 +13,12 @@ type StripeConfig struct {
 
 // ServiceConfig holds all configuration for the payment service.
 type ServiceConfig struct {
-	Port        string
-	DBConfig    config.DatabaseConfig
-	JWTConfig   config.JWTConfig
-	KafkaConfig config.KafkaConfig
-	StripeConfig StripeConfig
+	Port               string
+	DBConfig           config.DatabaseConfig
+	JWTConfig          config.JWTConfig
+	KafkaConfig        config.KafkaConfig
+	StripeConfig       StripeConfig
+	PlatformFeePercent float64
 }
 
 // Load reads configuration from environment variables and returns a ServiceConfig.
@@ -27,12 +28,18 @@ func Load() (*ServiceConfig, error) {
 		return nil, err
 	}
 
+	feePercent := v.GetFloat64("PLATFORM_FEE_PERCENT")
+	if feePercent <= 0 {
+		feePercent = 15.0
+	}
+
 	return &ServiceConfig{
-		Port:        config.GetServicePort(v, "SERVICE_PORT"),
-		DBConfig:    config.LoadDatabaseConfig(v, "DB_NAME"),
-		JWTConfig:   config.LoadJWTConfig(v),
-		KafkaConfig: config.LoadKafkaConfig(v),
-		StripeConfig: loadStripeConfig(v),
+		Port:               config.GetServicePort(v, "SERVICE_PORT"),
+		DBConfig:           config.LoadDatabaseConfig(v, "DB_NAME"),
+		JWTConfig:          config.LoadJWTConfig(v),
+		KafkaConfig:        config.LoadKafkaConfig(v),
+		StripeConfig:       loadStripeConfig(v),
+		PlatformFeePercent: feePercent,
 	}, nil
 }
 

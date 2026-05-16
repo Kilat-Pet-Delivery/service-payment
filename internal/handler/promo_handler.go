@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 
 	"github.com/Kilat-Pet-Delivery/lib-common/auth"
 	"github.com/Kilat-Pet-Delivery/lib-common/middleware"

@@ -20,6 +20,7 @@ import (
 	"github.com/Kilat-Pet-Delivery/service-payment/internal/config"
 	paymentEvents "github.com/Kilat-Pet-Delivery/service-payment/internal/events"
 	"github.com/Kilat-Pet-Delivery/service-payment/internal/handler"
+	"github.com/Kilat-Pet-Delivery/service-payment/internal/rail"
 	"github.com/Kilat-Pet-Delivery/service-payment/internal/repository"
 	"github.com/Kilat-Pet-Delivery/service-payment/internal/saga"
 	"github.com/gin-gonic/gin"
@@ -61,7 +62,13 @@ func main() {
 
 	// Run database migrations
 	if cfg.AppEnv == "development" {
-		if err := db.AutoMigrate(&repository.PaymentModel{}, &repository.PromoModel{}, &repository.PromoUsageModel{}, &repository.SubscriptionModel{}); err != nil {
+		if err := db.AutoMigrate(
+			&repository.PaymentModel{},
+			&repository.PromoModel{},
+			&repository.PromoUsageModel{},
+			&repository.SubscriptionModel{},
+			&repository.CashOutModel{},
+		); err != nil {
 			zapLogger.Fatal("failed to auto-migrate", zap.Error(err))
 		}
 		zapLogger.Info("database migration completed (dev auto-migrate)")
@@ -128,6 +135,14 @@ func main() {
 	subService := application.NewSubscriptionService(subRepo, zapLogger)
 	subHandler := handler.NewSubscriptionHandler(subService)
 
+	// Initialize cash-out rail and handler
+	simulatedRail := rail.NewSimulatedRail(cfg.CashOutRailDelay, zapLogger, rail.RealClock{})
+	cashOutRepo := repository.NewGormCashOutRepository(db)
+	// InMemoryDestinationOwnership seeds an empty map by default.
+	// Replace when service-identity exposes payout destinations.
+	destinationOwnership := adapter.NewInMemoryDestinationOwnership(nil)
+	cashOutHandler := handler.NewCashOutHandler(cashOutRepo, destinationOwnership, simulatedRail, cfg.CashOutRailDelay, zapLogger)
+
 	// Initialize HTTP handler
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 
@@ -151,6 +166,7 @@ func main() {
 	paymentHandler.RegisterRoutes(apiV1, jwtManager)
 	promoHandler.RegisterRoutes(apiV1, jwtManager)
 	subHandler.RegisterRoutes(apiV1, jwtManager)
+	cashOutHandler.RegisterRoutes(apiV1, jwtManager)
 
 	// Register admin handler routes
 	adminPaymentHandler := handler.NewAdminPaymentHandler(paymentService, promoService)

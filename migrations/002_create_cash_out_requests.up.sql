@@ -11,10 +11,14 @@ CREATE TABLE cash_out_requests (
     status              VARCHAR(20)  NOT NULL DEFAULT 'pending',
     requested_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
     completed_at        TIMESTAMPTZ  NULL,
-    simulated_rail_id   TEXT         NULL,                          -- DuitNow-style transaction reference
+    simulated_rail_id   VARCHAR(255) NULL,                          -- DuitNow-style transaction reference
 
     CONSTRAINT chk_cash_out_status
-        CHECK (status IN ('pending', 'processing', 'completed', 'failed'))
+        CHECK (status IN ('pending', 'processing', 'completed', 'failed')),
+    CONSTRAINT chk_cash_out_amount_positive
+        CHECK (amount_myr_cents > 0),
+    CONSTRAINT chk_cash_out_fee_non_negative
+        CHECK (fee_myr_cents >= 0)
 );
 
 CREATE INDEX idx_cash_out_requests_runner ON cash_out_requests(runner_id);

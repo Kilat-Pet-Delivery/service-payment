@@ -208,6 +208,14 @@ func (h *CashOutHandler) processRail(ctx context.Context, cashOutID, runnerID uu
 				zap.String("cash_out_id", cashOutID.String()),
 				zap.String("tx_ref", txRef),
 			)
+			bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if updateErr := h.repo.UpdateStatus(bgCtx, cashOutID, "failed", nil); updateErr != nil {
+				h.logger.Error("failed to mark cash-out as failed after polling timeout",
+					zap.String("cash_out_id", cashOutID.String()),
+					zap.Error(updateErr),
+				)
+			}
 			return
 
 		case <-ticker.C:
@@ -218,6 +226,14 @@ func (h *CashOutHandler) processRail(ctx context.Context, cashOutID, runnerID uu
 					zap.String("tx_ref", txRef),
 					zap.Error(err),
 				)
+				bgCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if updateErr := h.repo.UpdateStatus(bgCtx, cashOutID, "failed", nil); updateErr != nil {
+					h.logger.Error("failed to mark cash-out as failed after rail.Status error",
+						zap.String("cash_out_id", cashOutID.String()),
+						zap.Error(updateErr),
+					)
+				}
 				return
 			}
 

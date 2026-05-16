@@ -43,6 +43,10 @@ type CashOutRepository interface {
 	// GetAvailableBalanceCents computes the runner's available balance in cents:
 	//   released payments - (pending + processing + completed) cash-out requests.
 	GetAvailableBalanceCents(ctx context.Context, runnerID uuid.UUID) (int64, error)
+
+	// GetByID retrieves a cash-out request by its primary key.
+	// Returns gorm.ErrRecordNotFound when no row matches.
+	GetByID(ctx context.Context, id uuid.UUID) (*CashOutModel, error)
 }
 
 // GormCashOutRepository is the GORM-backed implementation of CashOutRepository.
@@ -85,6 +89,16 @@ func (r *GormCashOutRepository) MarkCompleted(ctx context.Context, id uuid.UUID)
 			"status":       "completed",
 			"completed_at": now,
 		}).Error
+}
+
+// GetByID retrieves a cash-out request row by its primary key.
+// Returns gorm.ErrRecordNotFound when no matching row exists.
+func (r *GormCashOutRepository) GetByID(ctx context.Context, id uuid.UUID) (*CashOutModel, error) {
+	var model CashOutModel
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&model).Error; err != nil {
+		return nil, err
+	}
+	return &model, nil
 }
 
 // GetAvailableBalanceCents computes:

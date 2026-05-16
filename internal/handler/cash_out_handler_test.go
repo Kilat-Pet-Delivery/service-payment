@@ -39,13 +39,22 @@ type fakeCashOutRepo struct {
 	balance    int64
 	balanceErr error
 	insertErr  error
+
+	// updateStatusCalls records every (id, status) pair passed to UpdateStatus.
+	updateStatusCalls []updateStatusCall
+}
+
+type updateStatusCall struct {
+	id     uuid.UUID
+	status string
 }
 
 func (f *fakeCashOutRepo) Insert(_ context.Context, _ *repository.CashOutModel) error {
 	return f.insertErr
 }
 
-func (f *fakeCashOutRepo) UpdateStatus(_ context.Context, _ uuid.UUID, _ string, _ *string) error {
+func (f *fakeCashOutRepo) UpdateStatus(_ context.Context, id uuid.UUID, status string, _ *string) error {
+	f.updateStatusCalls = append(f.updateStatusCalls, updateStatusCall{id: id, status: status})
 	return nil
 }
 
@@ -57,7 +66,11 @@ func (f *fakeCashOutRepo) GetAvailableBalanceCents(_ context.Context, _ uuid.UUI
 	return f.balance, f.balanceErr
 }
 
-// fakeRail is a no-op rail for unit tests.
+func (f *fakeCashOutRepo) GetByID(_ context.Context, _ uuid.UUID) (*repository.CashOutModel, error) {
+	return nil, nil
+}
+
+// fakeRail is a no-op rail for unit tests (always succeeds immediately).
 type fakeRail struct{}
 
 func (f *fakeRail) Submit(_ context.Context, _ uuid.UUID, _ int64, _ uuid.UUID) (string, error) {
@@ -66,6 +79,29 @@ func (f *fakeRail) Submit(_ context.Context, _ uuid.UUID, _ int64, _ uuid.UUID) 
 
 func (f *fakeRail) Status(_ context.Context, _ string) (rail.RailStatus, error) {
 	return rail.RailStatusCompleted, nil
+}
+
+// errorStatusRail is a rail whose Status always returns an error.
+type errorStatusRail struct{}
+
+func (e *errorStatusRail) Submit(_ context.Context, _ uuid.UUID, _ int64, _ uuid.UUID) (string, error) {
+	return "DN-err-ref", nil
+}
+
+func (e *errorStatusRail) Status(_ context.Context, _ string) (rail.RailStatus, error) {
+	return rail.RailStatusProcessing, assert.AnError
+}
+
+// alwaysProcessingRail is a rail whose Status always returns RailStatusProcessing
+// so the deadline branch will eventually fire.
+type alwaysProcessingRail struct{}
+
+func (a *alwaysProcessingRail) Submit(_ context.Context, _ uuid.UUID, _ int64, _ uuid.UUID) (string, error) {
+	return "DN-proc-ref", nil
+}
+
+func (a *alwaysProcessingRail) Status(_ context.Context, _ string) (rail.RailStatus, error) {
+	return rail.RailStatusProcessing, nil
 }
 
 // ---- helpers ----
@@ -208,4 +244,66 @@ func TestCashOut_EmptyDestinationID_Returns400(t *testing.T) {
 	r.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// TestCashOut_ProcessRail_StatusError_MarksFailed verifies that when rail.Status
+// returns an error during polling, the repository is updated to "failed".
+func TestCashOut_ProcessRail_StatusError_MarksFailed(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	repo := &fakeCashOutRepo{}
+	cashOutID := uuid.New()
+	runnerID := uuid.New()
+	destID := uuid.New()
+
+	h := NewCashOutHandler(repo, &fakeOwnership{result: true}, &errorStatusRail{}, 50*time.Millisecond, logger)
+
+	// Call processRail directly — it runs synchronously here.
+	h.processRail(context.Background(), cashOutID, runnerID, 1000, destID)
+
+	// The repo should have been called with status="failed" for our cashOutID.
+	require.Eventually(t, func() bool {
+		for _, call := range repo.updateStatusCalls {
+			if call.id == cashOutID && call.status == "failed" {
+				return true
+			}
+		}
+		return false
+	}, 500*time.Millisecond, 10*time.Millisecond, "expected UpdateStatus('failed') to be called")
+}
+
+// TestCashOut_ProcessRail_DeadlineExceeded_MarksFailed verifies that when rail
+// polling times out, the repository is updated to "failed".
+func TestCashOut_ProcessRail_DeadlineExceeded_MarksFailed(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	repo := &fakeCashOutRepo{}
+	cashOutID := uuid.New()
+	runnerID := uuid.New()
+	destID := uuid.New()
+
+	// railDelay = 10ms → deadline = max(2*10ms, 10s) = 10s, but we only need
+	// to observe the "failed" write. Use a very small delay so the goroutine
+	// finishes quickly.  We drive processRail directly so it blocks until done.
+	h := NewCashOutHandler(repo, &fakeOwnership{result: true}, &alwaysProcessingRail{}, 10*time.Millisecond, logger)
+
+	done := make(chan struct{})
+	go func() {
+		h.processRail(context.Background(), cashOutID, runnerID, 1000, destID)
+		close(done)
+	}()
+
+	// Wait up to 30s for the deadline goroutine to fire and mark failed.
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("processRail did not return within 30s")
+	}
+
+	found := false
+	for _, call := range repo.updateStatusCalls {
+		if call.id == cashOutID && call.status == "failed" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "expected UpdateStatus('failed') to be called after deadline")
 }

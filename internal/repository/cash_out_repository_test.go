@@ -222,6 +222,53 @@ func TestCashOutRepo_UpdateStatus_SetsRailID(t *testing.T) {
 	assert.Equal(t, "DN-test-ref", *updated.SimulatedRailID)
 }
 
+// TestCashOutRepo_GetByID_RoundTrip inserts a row and verifies GetByID returns
+// the same fields.
+func TestCashOutRepo_GetByID_RoundTrip(t *testing.T) {
+	db := setupRepoTestDB(t)
+	repo := NewGormCashOutRepository(db)
+	ctx := context.Background()
+
+	id := uuid.New()
+	runnerID := uuid.New()
+	destID := uuid.New()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	model := &CashOutModel{
+		ID:             id,
+		RunnerID:       runnerID,
+		AmountMyrCents: 7500,
+		FeeMyrCents:    50,
+		DestinationID:  destID,
+		Status:         "pending",
+		RequestedAt:    now,
+	}
+	require.NoError(t, repo.Insert(ctx, model))
+
+	fetched, err := repo.GetByID(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, fetched)
+	assert.Equal(t, id, fetched.ID)
+	assert.Equal(t, runnerID, fetched.RunnerID)
+	assert.Equal(t, destID, fetched.DestinationID)
+	assert.Equal(t, int64(7500), fetched.AmountMyrCents)
+	assert.Equal(t, int64(50), fetched.FeeMyrCents)
+	assert.Equal(t, "pending", fetched.Status)
+}
+
+// TestCashOutRepo_GetByID_NotFound verifies that GetByID returns an error when
+// no row matches the given UUID.
+func TestCashOutRepo_GetByID_NotFound(t *testing.T) {
+	db := setupRepoTestDB(t)
+	repo := NewGormCashOutRepository(db)
+	ctx := context.Background()
+
+	randomID := uuid.New()
+	fetched, err := repo.GetByID(ctx, randomID)
+	require.Error(t, err)
+	assert.Nil(t, fetched)
+}
+
 // TestCashOutRepo_MarkCompleted sets status = completed and completed_at.
 func TestCashOutRepo_MarkCompleted(t *testing.T) {
 	db := setupRepoTestDB(t)

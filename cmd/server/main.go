@@ -101,6 +101,7 @@ func main() {
 
 	// Initialize application service
 	paymentService := application.NewPaymentService(paymentRepo, sagaService, zapLogger)
+	payoutService := application.NewPayoutService(kafkaProducer, zapLogger)
 
 	// Initialize Kafka consumer for booking events
 	consumerGroupID := cfg.KafkaConfig.GroupPrefix + "payment-service"
@@ -111,6 +112,13 @@ func main() {
 		zapLogger,
 	)
 	defer bookingConsumer.Close()
+	loyaltyConsumer := paymentEvents.NewLoyaltyEventConsumer(
+		cfg.KafkaConfig.Brokers,
+		cfg.KafkaConfig.GroupPrefix+"payment-service-loyalty",
+		payoutService,
+		zapLogger,
+	)
+	defer loyaltyConsumer.Close()
 
 	// Start Kafka consumer in a goroutine
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
@@ -121,6 +129,14 @@ func main() {
 		if err := bookingConsumer.Start(consumerCtx); err != nil {
 			if consumerCtx.Err() == nil {
 				zapLogger.Error("booking event consumer failed", zap.Error(err))
+			}
+		}
+	}()
+	go func() {
+		zapLogger.Info("starting loyalty event consumer")
+		if err := loyaltyConsumer.Start(consumerCtx); err != nil {
+			if consumerCtx.Err() == nil {
+				zapLogger.Error("loyalty event consumer failed", zap.Error(err))
 			}
 		}
 	}()

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Kilat-Pet-Delivery/lib-common/auth"
+	"github.com/Kilat-Pet-Delivery/lib-common/domain"
 	"github.com/Kilat-Pet-Delivery/lib-common/middleware"
 	"github.com/Kilat-Pet-Delivery/lib-common/response"
 	"github.com/Kilat-Pet-Delivery/lib-proto/dto"
@@ -23,11 +24,12 @@ const cashOutFeeCents int64 = 50
 
 // CashOutHandler handles HTTP requests for runner cash-out operations.
 type CashOutHandler struct {
-	repo        repository.CashOutRepository
-	ownership   adapter.DestinationOwnership
-	rail        rail.Rail
-	railDelay   time.Duration
-	logger      *zap.Logger
+	repo         repository.CashOutRepository
+	ownership    adapter.DestinationOwnership
+	bankAccounts repository.BankAccountRepository
+	rail         rail.Rail
+	railDelay    time.Duration
+	logger       *zap.Logger
 }
 
 // NewCashOutHandler creates a new CashOutHandler with all required dependencies.
@@ -45,6 +47,12 @@ func NewCashOutHandler(
 		railDelay: railDelay,
 		logger:    logger,
 	}
+}
+
+// WithBankAccounts enables default bank-account lookup for cash-out requests.
+func (h *CashOutHandler) WithBankAccounts(repo repository.BankAccountRepository) *CashOutHandler {
+	h.bankAccounts = repo
+	return h
 }
 
 // RegisterRoutes registers all cash-out routes on the given router group.
@@ -66,8 +74,8 @@ func (h *CashOutHandler) CashOut(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if err := req.Validate(); err != nil {
-		response.BadRequest(c, err.Error())
+	if req.AmountMyrCents <= 0 {
+		response.BadRequest(c, "amountMyrCents must be greater than 0")
 		return
 	}
 
@@ -79,16 +87,15 @@ func (h *CashOutHandler) CashOut(c *gin.Context) {
 	}
 
 	// 3. Parse destination UUID.
-	destID, err := uuid.Parse(req.DestinationID)
+	ctx := c.Request.Context()
+	destID, err := h.resolveDestinationID(ctx, runnerID, req.DestinationID)
 	if err != nil {
-		response.BadRequest(c, "destinationId must be a valid UUID")
+		response.Error(c, err)
 		return
 	}
 
-	ctx := c.Request.Context()
-
 	// 4. Check destination ownership (cheap check — runs before DB balance query).
-	owned, err := h.ownership.BelongsTo(ctx, destID, runnerID)
+	owned, err := h.destinationBelongsTo(ctx, destID, runnerID)
 	if err != nil {
 		h.logger.Error("destination ownership check failed",
 			zap.String("runner_id", runnerID.String()),
@@ -150,6 +157,31 @@ func (h *CashOutHandler) CashOut(c *gin.Context) {
 		CashOutID:  cashOutID.String(),
 		EtaMinutes: etaMinutes,
 	})
+}
+
+func (h *CashOutHandler) resolveDestinationID(ctx context.Context, runnerID uuid.UUID, requested string) (uuid.UUID, error) {
+	if requested != "" {
+		destID, err := uuid.Parse(requested)
+		if err != nil {
+			return uuid.Nil, domain.NewValidationError("destinationId must be a valid UUID")
+		}
+		return destID, nil
+	}
+	if h.bankAccounts == nil {
+		return uuid.Nil, domain.NewValidationError("destinationId is required")
+	}
+	account, err := h.bankAccounts.FindDefaultByUserID(ctx, runnerID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return account.ID, nil
+}
+
+func (h *CashOutHandler) destinationBelongsTo(ctx context.Context, destID, runnerID uuid.UUID) (bool, error) {
+	if h.bankAccounts != nil {
+		return h.bankAccounts.BelongsTo(ctx, destID, runnerID)
+	}
+	return h.ownership.BelongsTo(ctx, destID, runnerID)
 }
 
 // processRail submits the transfer to the rail, persists the txRef, polls for

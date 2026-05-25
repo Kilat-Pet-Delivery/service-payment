@@ -68,6 +68,7 @@ func main() {
 			&repository.PromoUsageModel{},
 			&repository.SubscriptionModel{},
 			&repository.CashOutModel{},
+			&repository.BankAccountModel{},
 		); err != nil {
 			zapLogger.Fatal("failed to auto-migrate", zap.Error(err))
 		}
@@ -154,10 +155,13 @@ func main() {
 	// Initialize cash-out rail and handler
 	simulatedRail := rail.NewSimulatedRail(cfg.CashOutRailDelay, zapLogger, rail.RealClock{})
 	cashOutRepo := repository.NewGormCashOutRepository(db)
+	bankAccountRepo := repository.NewGormBankAccountRepository(db)
+	bankAccountService := application.NewBankAccountService(bankAccountRepo)
 	// InMemoryDestinationOwnership seeds an empty map by default.
 	// Replace when service-identity exposes payout destinations.
 	destinationOwnership := adapter.NewInMemoryDestinationOwnership(nil)
-	cashOutHandler := handler.NewCashOutHandler(cashOutRepo, destinationOwnership, simulatedRail, cfg.CashOutRailDelay, zapLogger)
+	cashOutHandler := handler.NewCashOutHandler(cashOutRepo, destinationOwnership, simulatedRail, cfg.CashOutRailDelay, zapLogger).WithBankAccounts(bankAccountRepo)
+	bankAccountHandler := handler.NewBankAccountHandler(bankAccountService)
 
 	// Initialize HTTP handler
 	paymentHandler := handler.NewPaymentHandler(paymentService)
@@ -183,6 +187,7 @@ func main() {
 	promoHandler.RegisterRoutes(apiV1, jwtManager)
 	subHandler.RegisterRoutes(apiV1, jwtManager)
 	cashOutHandler.RegisterRoutes(apiV1, jwtManager)
+	bankAccountHandler.RegisterRoutes(apiV1, jwtManager)
 
 	// Register admin handler routes
 	adminPaymentHandler := handler.NewAdminPaymentHandler(paymentService, promoService)

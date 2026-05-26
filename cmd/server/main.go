@@ -68,6 +68,9 @@ func main() {
 			&repository.PromoUsageModel{},
 			&repository.SubscriptionModel{},
 			&repository.CashOutModel{},
+			&repository.ShopWalletLedgerModel{},
+			&repository.ShopWithdrawalModel{},
+			&repository.PaymentIdempotencyKeyModel{},
 		); err != nil {
 			zapLogger.Fatal("failed to auto-migrate", zap.Error(err))
 		}
@@ -101,6 +104,8 @@ func main() {
 
 	// Initialize application service
 	paymentService := application.NewPaymentService(paymentRepo, sagaService, zapLogger)
+	shopWalletRepo := repository.NewGormShopWalletRepository(db)
+	shopWalletService := application.NewShopWalletService(shopWalletRepo, zapLogger)
 
 	// Initialize Kafka consumer for booking events
 	consumerGroupID := cfg.KafkaConfig.GroupPrefix + "payment-service"
@@ -109,6 +114,7 @@ func main() {
 		consumerGroupID,
 		paymentService,
 		zapLogger,
+		shopWalletService,
 	)
 	defer bookingConsumer.Close()
 
@@ -142,6 +148,7 @@ func main() {
 	// Replace when service-identity exposes payout destinations.
 	destinationOwnership := adapter.NewInMemoryDestinationOwnership(nil)
 	cashOutHandler := handler.NewCashOutHandler(cashOutRepo, destinationOwnership, simulatedRail, cfg.CashOutRailDelay, zapLogger)
+	shopWalletHandler := handler.NewShopWalletHandler(shopWalletService)
 
 	// Initialize HTTP handler
 	paymentHandler := handler.NewPaymentHandler(paymentService)
@@ -167,6 +174,7 @@ func main() {
 	promoHandler.RegisterRoutes(apiV1, jwtManager)
 	subHandler.RegisterRoutes(apiV1, jwtManager)
 	cashOutHandler.RegisterRoutes(apiV1, jwtManager)
+	shopWalletHandler.RegisterRoutes(apiV1, jwtManager)
 
 	// Register admin handler routes
 	adminPaymentHandler := handler.NewAdminPaymentHandler(paymentService, promoService)

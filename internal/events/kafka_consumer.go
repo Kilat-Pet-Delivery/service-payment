@@ -7,6 +7,7 @@ import (
 	"github.com/Kilat-Pet-Delivery/lib-common/kafka"
 	"github.com/Kilat-Pet-Delivery/lib-proto/events"
 	"github.com/Kilat-Pet-Delivery/service-payment/internal/application"
+	"github.com/google/uuid"
 	kafkago "github.com/segmentio/kafka-go"
 	"go.uber.org/zap"
 )
@@ -15,6 +16,7 @@ import (
 type BookingEventConsumer struct {
 	consumer       *kafka.Consumer
 	paymentService *application.PaymentService
+	walletService  *application.ShopWalletService
 	logger         *zap.Logger
 }
 
@@ -24,11 +26,17 @@ func NewBookingEventConsumer(
 	groupID string,
 	paymentService *application.PaymentService,
 	logger *zap.Logger,
+	walletService ...*application.ShopWalletService,
 ) *BookingEventConsumer {
 	consumer := kafka.NewConsumer(brokers, groupID, events.TopicBookingEvents, logger)
+	var wallet *application.ShopWalletService
+	if len(walletService) > 0 {
+		wallet = walletService[0]
+	}
 	return &BookingEventConsumer{
 		consumer:       consumer,
 		paymentService: paymentService,
+		walletService:  wallet,
 		logger:         logger,
 	}
 }
@@ -60,6 +68,8 @@ func (c *BookingEventConsumer) handleMessage(ctx context.Context, msg kafkago.Me
 
 	case strings.EqualFold(cloudEvent.Type, events.BookingCancelled):
 		return c.handleBookingCancelled(ctx, cloudEvent)
+	case strings.EqualFold(cloudEvent.Type, "booking.delivered"):
+		return c.handleBookingDelivered(ctx, cloudEvent)
 
 	default:
 		c.logger.Debug("ignoring unhandled booking event type",
@@ -67,6 +77,27 @@ func (c *BookingEventConsumer) handleMessage(ctx context.Context, msg kafkago.Me
 		)
 		return nil
 	}
+}
+
+// handleBookingDelivered credits shop wallet ledger for shop bookings.
+func (c *BookingEventConsumer) handleBookingDelivered(ctx context.Context, ce kafka.CloudEvent) error {
+	if c.walletService == nil {
+		return nil
+	}
+	var event struct {
+		BookingID       uuid.UUID `json:"booking_id"`
+		ShopID          uuid.UUID `json:"shop_id"`
+		GrossSalesCents int64     `json:"gross_sales_cents"`
+		NetSalesCents   int64     `json:"net_sales_cents"`
+	}
+	if err := ce.ParseData(&event); err != nil {
+		return err
+	}
+	amount := event.NetSalesCents
+	if amount == 0 {
+		amount = event.GrossSalesCents
+	}
+	return c.walletService.HandleBookingDelivered(ctx, event.BookingID, event.ShopID, amount)
 }
 
 // handleDeliveryConfirmed processes a DeliveryConfirmedEvent.
